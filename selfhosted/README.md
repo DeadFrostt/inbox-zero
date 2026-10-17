@@ -74,3 +74,8 @@ run existing mailbox rules, so review those rules deliberately.
 Each browser keeps its own local cache. Bulk unsubscribe still waits on external
 websites and processes senders sequentially. The source integration reduces
 Gmail preparation/readback costs while retaining the original durable operations.
+
+The deployed fallback poller uses `--interval-seconds=15` to check at 15-second
+intervals within each minute CronJob. Passes run sequentially; slow passes skip
+missed ticks, and failures stop the window for the scheduler to retry. Omitting
+the option retains a single pass for diagnostics.
