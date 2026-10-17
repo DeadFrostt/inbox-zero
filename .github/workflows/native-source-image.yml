@@ -46,6 +46,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
+          docker buildx create --name native-source --driver docker-container --use
+          docker buildx inspect --bootstrap
           read -r upstream < selfhosted/upstream-revision.txt
           [[ "$upstream" =~ ^[0-9a-f]{40}$ ]]
           tree=$(git rev-parse HEAD^{tree})
