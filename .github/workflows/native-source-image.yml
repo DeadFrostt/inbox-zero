@@ -21,9 +21,16 @@ jobs:
       RUN_AI_TESTS: 'false'
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+      # Upstream retains a marketing gitlink without .gitmodules. Fetch the
+      # public application source without credentials or submodule traversal.
+      - name: Check out public source at the exact workflow revision
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin https://github.com/DeadFrostt/inbox-zero.git
+          git -c core.hooksPath=/dev/null fetch --depth=1 origin "$GITHUB_SHA"
+          git -c core.hooksPath=/dev/null checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
