@@ -129,6 +129,11 @@ describe("gmail oauth client configuration", () => {
     });
   });
 
+  it("uses the shared native transport and disables SDK write retries", async () => {
+    await getGmailClientWithRefresh({ accessToken: "synthetic", refreshToken: "synthetic", expiresAt: Date.now() + 3_600_000, emailAccountId: "synthetic", logger });
+    expect(gmail).toHaveBeenCalledWith(expect.objectContaining({ fetchImplementation: expect.any(Function), retry: false }));
+  });
+
   it("uses emulator-aware Gmail root URLs when refreshing tokens", async () => {
     refreshAccessToken.mockResolvedValue({
       credentials: {
@@ -149,6 +154,8 @@ describe("gmail oauth client configuration", () => {
       version: "v1",
       auth: expect.any(Object),
       rootUrl: "http://localhost:4444",
+      fetchImplementation: expect.any(Function),
+      retry: false,
     });
   });
 

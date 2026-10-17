@@ -1,6 +1,7 @@
 import { isDefined } from "@/utils/types";
 import { getGoogleGmailBatchUrl } from "@/utils/gmail/oauth";
 import { createScopedLogger } from "@/utils/logger";
+import { gmailFetch } from "@/utils/gmail/native-runtime";
 
 const logger = createScopedLogger("gmail/batch");
 
@@ -28,7 +29,7 @@ export async function getBatch(
   }
   batchRequestBody += "--batch_boundary--";
 
-  const res = await fetch(getGoogleGmailBatchUrl(), {
+  const res = await gmailFetch(getGoogleGmailBatchUrl(), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,

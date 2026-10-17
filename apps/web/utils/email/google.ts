@@ -142,6 +142,9 @@ import { extractUniqueEmailAddresses } from "@/utils/email";
 import { requireSentMessageId } from "@/utils/email/sent-message-id";
 import { getGmailMailboxSyncPage } from "@/utils/gmail/mailbox-sync";
 import { isGoogleOauthEmulationEnabled } from "@/utils/gmail/oauth";
+import { randomUUID } from "node:crypto";
+import { decorateMailboxProvider } from "@/utils/gmail/native-core.cjs";
+import { readGmailHistory } from "@/utils/gmail/native-runtime";
 
 const GMAIL_MESSAGE_WRITE_CONCURRENCY = 5;
 
@@ -151,6 +154,7 @@ export class GmailProvider implements EmailProvider {
   private readonly client: gmail_v1.Gmail;
   private readonly logger: Logger;
   private readonly emailAccountId?: string;
+  private readonly historyScope = randomUUID();
   private sendAsPromise?: Promise<GmailSignature[]>;
 
   constructor(
@@ -1732,12 +1736,19 @@ export class GmailProvider implements EmailProvider {
     folderId?: string;
     limit: number;
   }) {
-    return getGmailMailboxSyncPage({
-      gmail: this.client,
-      accessToken: getAccessTokenFromClient(this.client),
-      logger: this.logger,
-      ...options,
-    });
+    const adapter = decorateMailboxProvider({
+      name: this.name,
+      client: this.client,
+      getMessage: (id: string) => this.getMessage(id),
+      getMessagesBatch: (ids: string[]) => this.getMessagesBatch(ids),
+      getMailboxSyncPage: (input: typeof options) => getGmailMailboxSyncPage({
+        gmail: this.client,
+        accessToken: getAccessTokenFromClient(this.client),
+        logger: this.logger,
+        ...input,
+      }),
+    }, this.emailAccountId ?? this.historyScope, readGmailHistory);
+    return adapter.getMailboxSyncPage(options);
   }
 
   getAccessToken(): string {

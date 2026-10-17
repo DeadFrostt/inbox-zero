@@ -38,6 +38,8 @@ import prisma from "@/utils/prisma";
 import { EmailSendOperationStatus } from "@/generated/prisma/enums";
 import type { ParsedMessage } from "@/utils/types";
 import { scheduleEmailBody } from "@/utils/actions/scheduled-email.validation";
+import { decorateOperationExecutor } from "@/utils/gmail/native-core.cjs";
+import { withGmailMetadata } from "@/utils/gmail/native-runtime";
 
 const logger = createScopedLogger("mail-api/operations");
 const HELD_SEND_POLL_MS = 2000;
@@ -53,7 +55,7 @@ export function createEmailProviderOperationExecutor(input: {
   accountId: string;
 }): OperationExecutor {
   const { provider, accountId } = input;
-  return {
+  return decorateOperationExecutor({
     async execute({ operation }) {
       if (operation.intent.kind === "send") {
         return executeSend(provider, accountId, operation);
@@ -104,7 +106,7 @@ export function createEmailProviderOperationExecutor(input: {
         intent: operation.intent,
       });
     },
-  };
+  }, provider, { runMetadata: withGmailMetadata });
 }
 
 async function executeMetadataPerTarget(

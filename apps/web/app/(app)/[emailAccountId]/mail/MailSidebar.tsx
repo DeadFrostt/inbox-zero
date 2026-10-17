@@ -648,7 +648,7 @@ function LabelBranch({
               collapsed ? (
                 <TagIcon
                   className="size-4 shrink-0"
-                  style={{ color: label.color?.backgroundColor }}
+                  style={{ color: label.color?.backgroundColor ?? undefined }}
                 />
               ) : (
                 <span

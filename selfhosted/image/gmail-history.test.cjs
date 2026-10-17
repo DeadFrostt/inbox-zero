@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {createHistoryPager,decorateMailboxProvider,patchRuntimeSource,MAILBOX_GUARDED_OLD,MAILBOX_GUARDED}=require('./gmail-pacing.cjs');
+const {createHistoryPager,decorateMailboxProvider}=require('../../apps/web/utils/gmail/native-core.cjs');
 const encode=c=>Buffer.from(JSON.stringify(c)).toString('base64url');
 const decode=c=>JSON.parse(Buffer.from(c,'base64url'));
 const baseline=()=>encode({version:1,provider:'google',phase:'delta',historyId:'10',after:'1970-01-01T00:00:00.000Z',pageToken:'legacy-label-page'});
@@ -15,6 +15,23 @@ function fakeProvider(pages){
   getMailboxSyncPage:async input=>({original:true,input}),
  };
 }
+test('folder-scoped history delegates to the folder-aware provider without account-wide leakage',async()=>{
+ const p=fakeProvider([{historyId:'20',history:[{messagesAdded:[change('unrelated')]}]}]);
+ const result=await createHistoryPager()(p,'account',{cursor:baseline(),folderId:'STARRED',limit:10});
+ assert.equal(result.original,true);assert.equal(result.input.folderId,'STARRED');
+ assert.equal(p.calls.length,0);assert.equal(p.hydrated.length,0);
+});
+test('continuous arrivals retain a FIFO slot for older pending history',async()=>{
+ const old=Array.from({length:25},(_,i)=>change('old-'+i));
+ const arrivals=prefix=>Array.from({length:10},(_,i)=>change(prefix+i));
+ const p=fakeProvider([{historyId:'100',history:[{labelsAdded:old}]},{historyId:'110',history:[{messagesAdded:arrivals('fresh-a-')}]},{historyId:'120',history:[{messagesAdded:arrivals('fresh-b-')}]}]);
+ const read=createHistoryPager();let result=await read(p,'account',{cursor:baseline(),limit:10});
+ result=await read(p,'account',{cursor:result.cursor,limit:10});
+ assert.ok(p.hydrated[1][0].startsWith('fresh-a-'));assert.ok(p.hydrated[1].includes('old-10'));
+ result=await read(p,'account',{cursor:result.cursor,limit:10});
+ assert.ok(p.hydrated[2][0].startsWith('fresh-b-'));assert.ok(p.hydrated[2].includes('old-11'));
+ assert.equal(result.hasMore,true);
+});
 test('legacy label backlog is re-listed and the newest arrival is hydrated first',async()=>{
  const labels=Array.from({length:35},(_,i)=>change('old-'+i));
  const p=fakeProvider([{historyId:'100',history:[{labelsAdded:labels},{messagesAdded:[change('new')]}]}]);
@@ -64,12 +81,11 @@ test('empty history does not fetch messages and other providers or bootstrap rea
  assert.equal((await read(p,'a',{after:new Date(0),limit:1})).original,true);
  const other={name:'microsoft'};assert.equal(decorateMailboxProvider(other,'a',read),other);
 });
-test('provider wrapper binds methods to the actual provider and upgrades existing runtime patches',async()=>{
+test('provider adapter binds methods to the actual provider',async()=>{
  const p=fakeProvider([{historyId:'100',history:[]}]);p.checkThis=function(){return this===p};
  const guarded=decorateMailboxProvider(p,'a',createHistoryPager());assert.equal(guarded.checkThis(),true);
  assert.equal((await guarded.getMailboxSyncPage({cursor:baseline(),limit:10})).hasMore,false);
- assert.equal(patchRuntimeSource(MAILBOX_GUARDED_OLD),MAILBOX_GUARDED);
- assert.equal(patchRuntimeSource(MAILBOX_GUARDED),MAILBOX_GUARDED);
+
 });
 test('received inbox arrivals precede newer generated drafts',async()=>{
  const inbox={message:{id:'inbox',labelIds:['INBOX','UNREAD']}};

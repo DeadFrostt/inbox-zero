@@ -7,6 +7,7 @@ import { SCOPES } from "@/utils/gmail/scopes";
 import { SafeError } from "@/utils/error";
 import { classifyEmailAccountProviderIssue } from "@/utils/email/provider-health";
 import { env } from "@/env";
+import { gmailFetch } from "@/utils/gmail/native-runtime";
 import {
   getGoogleGmailApiRootUrl,
   getGoogleOauthClientOptions,
@@ -80,7 +81,7 @@ export const getGmailClientWithRefresh = async ({
 
   // we handle refresh ourselves so not passing in expiresAt
   const auth = getAuth({ accessToken, refreshToken });
-  const g = gmail({ version: "v1", auth, rootUrl: getGoogleGmailApiRootUrl() });
+  const g = gmail({ version: "v1", auth, rootUrl: getGoogleGmailApiRootUrl(), fetchImplementation: gmailFetch, retry: false });
 
   const expiryDate = expiresAt ? expiresAt : null;
   if (expiryDate && expiryDate > Date.now() + TOKEN_REFRESH_BUFFER_MS) {

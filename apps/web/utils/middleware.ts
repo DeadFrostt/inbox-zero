@@ -28,6 +28,7 @@ import prisma from "@/utils/prisma";
 import { createEmailProvider } from "@/utils/email/provider";
 import type { EmailProvider } from "@/utils/email/types";
 import { startRequestTimer } from "@/utils/request-timing";
+import { capGmailRequest, withGmailRequest } from "@/utils/gmail/native-runtime";
 import {
   type AuditActorType,
   runWithAuditContext,
@@ -84,6 +85,7 @@ function withMiddleware<T extends NextRequest>(
   scope?: string,
 ): NextHandler {
   return async (req, context) => {
+    req = capGmailRequest(req);
     const requestId = getRequestId(req.headers.get("x-request-id"));
     const baseLogger = createScopedLogger(scope || "api").with({
       requestId,
@@ -103,7 +105,7 @@ function withMiddleware<T extends NextRequest>(
     reqWithLogger.logger = baseLogger;
     let requestForError = reqWithLogger as NextRequest;
 
-    return runWithAuditContext(
+    return withGmailRequest(req, () => runWithAuditContext(
       {
         actorType: getDefaultAuditActorType(scope),
         requestId,
@@ -286,7 +288,7 @@ function withMiddleware<T extends NextRequest>(
           requestTimer?.stop();
         }
       },
-    );
+    ));
   };
 }
 

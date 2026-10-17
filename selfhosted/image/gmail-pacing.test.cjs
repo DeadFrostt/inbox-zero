@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
-const { requestCost, createPacer: productionPacer } = require('./gmail-pacing.cjs');
+const { requestCost, createPacer: productionPacer } = require('../../apps/web/utils/gmail/native-core.cjs');
 const createPacer = options => productionPacer({ unitsPerSecond: 25, ...options });
 const message = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/example?format=metadata';
 
@@ -64,7 +64,7 @@ test('cancelled backlog does not reserve future quota slots', async () => {
   assert.deepEqual(delays, [0, 800, 800]);
 });
 
-const { createGmailTransport, patchAdapterSource, ADAPTER_PLAIN, ADAPTER_OLD, ADAPTER_MANAGED } = require('./gmail-pacing.cjs');
+const { createGmailTransport } = require('../../apps/web/utils/gmail/native-core.cjs');
 const batchUrl = 'https://www.googleapis.com/batch/gmail/v1';
 const quotaResponse = (seconds = 0) => new Response(JSON.stringify({ error: { errors: [{ reason: 'rateLimitExceeded' }] } }), {
   status: 403, headers: { 'content-type': 'application/json', 'retry-after': String(seconds) },
@@ -149,14 +149,16 @@ test('non-quota 403s and mutating requests are not automatically replayed', asyn
   assert.deepEqual(cooldowns, [65000]);
 });
 
-test('SDK adapter patch upgrades both pristine and previous images and is idempotent', () => {
-  for (const source of [ADAPTER_PLAIN, ADAPTER_OLD]) {
-    assert.equal(patchAdapterSource(source), ADAPTER_MANAGED);
-    assert.equal(patchAdapterSource(patchAdapterSource(source)), ADAPTER_MANAGED);
-  }
+test('native transport preserves an explicitly supplied fetch implementation', async () => {
+  const expected = new Response('{}');
+  let calls = 0;
+  const transport = createGmailTransport(async () => {});
+  const actual = await transport(async () => { calls++; return expected; }, message);
+  assert.equal(actual, expected);
+  assert.equal(calls, 1);
 });
 
-const { requestDetails, installRequestContext } = require('./gmail-pacing.cjs');
+const { requestDetails } = require('../../apps/web/utils/gmail/native-core.cjs');
 
 test('thread pages stay small while preserving filters and continuation tokens', () => {
   const result = requestDetails('/api/threads?type=inbox&limit=25&after=2026-10-01&nextPageToken=keep-me', 'GET');
@@ -202,30 +204,21 @@ test('a disconnected browser cancels queued Gmail work even without an SDK signa
   assert.equal(fetches, 0);
 });
 
-test('HTTP request context preserves pagination and aborts after a premature response close', async () => {
+test('request context preserves pagination and propagates cancellation', async () => {
   const { AsyncLocalStorage } = require('node:async_hooks');
-  const { Server } = require('node:http');
-  const { EventEmitter } = require('node:events');
   const storage = new AsyncLocalStorage();
-  const restore = installRequestContext(storage);
-  try {
-    const server = new Server();
-    const request = Object.assign(new EventEmitter(), { url: '/api/threads?limit=25&nextPageToken=next', method: 'GET' });
-    const response = Object.assign(new EventEmitter(), { writableEnded: false });
-    let signal;
-    server.on('request', () => {
-      assert.equal(request.url, '/api/threads?limit=5&nextPageToken=next');
-      assert.equal(storage.getStore().priority, 1);
-      signal = storage.getStore().signal;
-    });
-    server.emit('request', request, response);
-    assert.equal(signal.aborted, false);
-    response.emit('close');
-    assert.equal(signal.aborted, true);
-  } finally { restore(); }
+  const details = requestDetails('/api/threads?limit=25&nextPageToken=next', 'GET');
+  assert.equal(details.url, '/api/threads?limit=5&nextPageToken=next');
+  const controller = new AbortController();
+  controller.abort();
+  const transport = createGmailTransport(createPacer(), { context: () => storage.getStore() });
+  await storage.run({ ...details, signal: controller.signal }, async () => {
+    assert.equal(storage.getStore().priority, 1);
+    await assert.rejects(transport(async () => { throw new Error('must not fetch'); }, message), { name: 'AbortError' });
+  });
 });
 
-const { decorateMailboxSource, patchRuntimeSource, MAILBOX_FACTORY, MAILBOX_GUARDED, LIVE_SCOPE } = require('./gmail-pacing.cjs');
+const { decorateMailboxSource, LIVE_SCOPE } = require('../../apps/web/utils/gmail/native-core.cjs');
 function fakeMailboxSource() {
   const calls = [];
   const source = {
@@ -277,20 +270,11 @@ test('Microsoft provider sync is preserved', () => {
   assert.equal(decorateMailboxSource(source, { name: 'microsoft' }), source);
 });
 
-test('the pinned source factory is decorated exactly once and remains idempotent', () => {
-  const vm = require('node:vm');
-  const factory = MAILBOX_FACTORY + 'I={accountId:l,provider:s.name};return I}];';
-  const patched = patchRuntimeSource(factory);
-  assert.ok(patched.includes(MAILBOX_GUARDED));
-  assert.equal(patchRuntimeSource(patched), patched);
-  const sandbox = {};
-  let wrapped = 0;
-  sandbox[Symbol.for('inboxzero.gmailPacing')] = { mailboxProvider: provider => provider, mailboxSource: source => { wrapped++; return { ...source, guarded: true }; } };
-  const exported = vm.runInNewContext(patched, sandbox);
-  const value = exported[2]({ accountId: 'account', provider: { name: 'google' } });
-  assert.equal(value.accountId, 'account');
-  assert.equal(value.guarded, true);
-  assert.equal(wrapped, 1);
+test('native source decoration leaves only one independent live scope', async () => {
+  const { source } = fakeMailboxSource();
+  const decorated = decorateMailboxSource(decorateMailboxSource(source, { name: 'google' }), { name: 'google' });
+  const result = await decorated.discoverScopes({});
+  assert.deepEqual(result.value.scopes.map(scope => scope.id), [LIVE_SCOPE, 'primary']);
 });
 
 test('mailbox protocol POST requests receive foreground priority', () => {
@@ -364,7 +348,7 @@ test('aged archive reads cannot starve behind ongoing higher-priority automation
 });
 
 
-const { historyPosition } = require('./gmail-pacing.cjs');
+const { historyPosition } = require('../../apps/web/utils/gmail/native-core.cjs');
 const snapshotCursor = () => Buffer.from(JSON.stringify({version:1,provider:'google',phase:'snapshot',historyId:'9007199254740993123',after:'1970-01-01T00:00:00.000Z',pageToken:'archive-page'})).toString('base64url');
 test('bootstrap records a genuine history baseline rather than a second archive scan', async () => {
   const {source}=fakeMailboxSource();
@@ -459,7 +443,7 @@ test('list sync uses metadata while opening a message and AI still retrieve full
 });
 
 test('metadata batch rewriting preserves all IDs, query parameters, and mutation requests',async()=>{
-  const {metadataRead}=require('./gmail-pacing.cjs');
+  const {metadataRead}=require('../../apps/web/utils/gmail/native-core.cjs');
   const original=batchOptions(3);
   const rewritten=metadataRead(batchUrl,original);
   assert.equal(requestCost(rewritten.input,rewritten.options),60);

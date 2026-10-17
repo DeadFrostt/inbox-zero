@@ -17,5 +17,5 @@ jobs:
         run: node --test selfhosted/image/*.test.cjs selfhosted/scripts/poll-gmail.test.mjs
       - name: Check scripts
         run: |
-          node --check selfhosted/image/patch-gmail-transport.cjs
+          node --check apps/web/utils/gmail/native-core.cjs
           node --check selfhosted/scripts/maintenance.mjs

@@ -22,6 +22,7 @@ import { createEmailProvider } from "@/utils/email/provider";
 import { isProviderRateLimitModeError } from "@/utils/email/rate-limit-mode-error";
 import { recordRateLimitFromApiError } from "@/utils/email/rate-limit";
 import { getAuditContext } from "@/utils/audit/context";
+import { gmailFetch } from "@/utils/gmail/native-runtime";
 
 vi.mock("better-auth", () => {
   const mockAuthFn = vi.fn();
@@ -92,6 +93,41 @@ describe("Middleware", () => {
   });
 
   describe("withError", () => {
+    it.each([
+      ["/api/threads?limit=100&pageToken=retained", "5"],
+      ["/api/threads/basic?fromEmail=synthetic&labelId=INBOX&limit=100&pageToken=retained", "10"],
+    ])("applies the Gmail page bound to the actual handler request: %s", async (path, limit) => {
+      const request = new NextRequest("http://localhost" + path);
+      const handler = withError("page-bound", async (req) => NextResponse.json({
+        limit: req.nextUrl.searchParams.get("limit"),
+        pageToken: req.nextUrl.searchParams.get("pageToken"),
+      }));
+      const response = await handler(request, mockContext);
+      expect(await response.json()).toEqual({ limit, pageToken: "retained" });
+    });
+    it("scopes sender-cleanup reads to metadata and propagates the request signal", async () => {
+      let format: string | null = null;
+      let signal: AbortSignal | null | undefined;
+      vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, options?: RequestInit) => {
+        format = new URL(String(input)).searchParams.get("format");
+        signal = options?.signal;
+        return new Response("{}");
+      }));
+      const controller = new AbortController();
+      const request = new NextRequest("http://localhost/api/threads/basic?fromEmail=synthetic&labelId=INBOX", { signal: controller.signal });
+      try {
+        const handler = withError("synthetic", async () => {
+          await gmailFetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/synthetic?format=full");
+          return NextResponse.json({ ok: true });
+        });
+        await handler(request, mockContext);
+        expect(format).toBe("metadata");
+        expect(signal?.aborted).toBe(false);
+        controller.abort();
+        expect(signal?.aborted).toBe(true);
+      } finally { vi.unstubAllGlobals(); }
+    });
+
     it("uses valid UUID v4 request IDs from the request header", async () => {
       const requestId = "123e4567-e89b-42d3-a456-426614174000";
       mockReq = createMockRequest("GET", "http://localhost/test", {

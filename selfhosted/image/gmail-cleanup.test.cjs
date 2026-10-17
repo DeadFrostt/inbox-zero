@@ -2,7 +2,7 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {AsyncLocalStorage}=require('node:async_hooks');
-const {requestDetails,metadataRead,requestCost,createGmailTransport,decorateMailboxSource,decorateOperationExecutor,patchRuntimeSource,OPERATION_FACTORY,OPERATION_GUARDED}=require('./gmail-pacing.cjs');
+const {requestDetails,metadataRead,requestCost,createGmailTransport,decorateMailboxSource,decorateOperationExecutor}=require('../../apps/web/utils/gmail/native-core.cjs');
 const base='https://gmail.googleapis.com/gmail/v1/users/me/';
 function harness(){
  const storage=new AsyncLocalStorage(), calls=[];
@@ -74,11 +74,13 @@ test('executor errors and uncertain results retain normal recovery semantics',as
  const wrapped=decorateOperationExecutor(executor,{name:'google'},h),input={operation:{intent:{kind:'metadata'}}};
  await assert.rejects(wrapped.execute(input),e=>e===error);assert.equal(await wrapped.inspect(input),uncertain);
 });
-test('pinned executor export is wrapped once and remains compatible with repeated startup patching',()=>{
- const vm=require('node:vm');const source='['+OPERATION_FACTORY+'execute(){return t.name},inspect(){return a}}}]';
- const patched=patchRuntimeSource(source);assert.ok(patched.includes(OPERATION_GUARDED));assert.equal(patchRuntimeSource(patched),patched);
- let wrapped=0;const sandbox={};sandbox[Symbol.for('inboxzero.gmailPacing')]={operationExecutor:(value)=>{wrapped++;return value}};
- const exported=vm.runInNewContext(patched,sandbox);
- const value=exported[2]({provider:{name:'google'},accountId:'account'});
- assert.equal(value.execute(),'google');assert.equal(value.inspect(),'account');assert.equal(wrapped,1);
+test('metadata wrapping enters and exits the scope without replaying the executor',async()=>{
+ const h=harness();let calls=0;
+ const executor={execute:async()=>{calls++;await h.read('messages/a');return{status:'confirmed'}},inspect:async()=>({status:'uncertain'})};
+ const wrapped=decorateOperationExecutor(executor,{name:'google'},h);
+ await wrapped.execute({operation:{intent:{kind:'metadata'}}});
+ await h.read('messages/a');
+ assert.equal(calls,1);
+ assert.equal(new URL(h.calls[0].url).searchParams.get('format'),'metadata');
+ assert.equal(new URL(h.calls[1].url).searchParams.get('format'),null);
 });

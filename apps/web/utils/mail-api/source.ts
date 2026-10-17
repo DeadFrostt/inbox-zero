@@ -21,6 +21,8 @@ import { extractErrorInfo as extractOutlookErrorInfo } from "@/utils/outlook/ret
 import type { ParsedMessage } from "@/utils/types";
 import { mapWithConcurrency } from "@/utils/async";
 import { convertEmailHtmlToText } from "@/utils/mail";
+import { decorateMailboxSource } from "@/utils/gmail/native-core.cjs";
+import { withGmailMetadata } from "@/utils/gmail/native-runtime";
 
 // Outlook allows four concurrent Graph requests per mailbox, shared with
 // webhook processing, so batched folder reads stay below that.
@@ -385,7 +387,7 @@ export function createEmailProviderMailboxSource(input: {
       }
     },
   };
-  return {
+  return decorateMailboxSource({
     ...source,
     async readChangesBatch({ session, reads, pageSize, signal }) {
       const read = (item: (typeof reads)[number]) =>
@@ -406,7 +408,7 @@ export function createEmailProviderMailboxSource(input: {
         ...(await mapWithConcurrency(rest, CHANGES_BATCH_CONCURRENCY, read)),
       ];
     },
-  };
+  }, provider, { runMetadata: withGmailMetadata });
 }
 
 function parsedMessageBodies(accountId: string, messages: ParsedMessage[]) {

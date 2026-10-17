@@ -55,7 +55,7 @@ describe("createEmailProviderMailboxSource", () => {
         mailbox: "all",
         text: { kind: "text", field: "any", value: "invoice", match: "phrase" },
       },
-      maxResults: 20,
+      maxResults: 10,
       pageToken: "next-page",
     });
   });
@@ -164,7 +164,7 @@ describe("createEmailProviderMailboxSource", () => {
         mailbox: "spam",
         text: { kind: "text", field: "any", value: "invoice", match: "phrase" },
       },
-      maxResults: 20,
+      maxResults: 10,
       pageToken: undefined,
     });
   });
@@ -555,7 +555,7 @@ describe("createEmailProviderMailboxSource", () => {
     expect(() => syncPageSchema.parse(result.page)).not.toThrow();
   });
 
-  it("hydrates delta meeting invitations instead of storing an empty body", async () => {
+  it("defers Gmail invitation bodies to on-demand hydration without storing an empty body", async () => {
     const invitation = compactMailboxSyncMessage({
       id: "invite-1",
       threadId: "t1",
@@ -595,9 +595,7 @@ describe("createEmailProviderMailboxSource", () => {
     });
     if (result.status !== "page") throw new Error("expected a page");
     expect(result.page.bodies ?? []).toEqual([]);
-    expect(result.page.requiredHydration).toEqual([
-      { accountId: "acc-1", messageId: "invite-1" },
-    ]);
+    expect(result.page.requiredHydration).toEqual([]);
   });
 
   it("batches folder reads, warming the provider with the first and capping concurrency", async () => {
@@ -737,7 +735,7 @@ describe("createEmailProviderMailboxSource", () => {
       pageSize: 50,
     });
     expect(getMessagesWithPagination).toHaveBeenCalledWith({
-      maxResults: 50,
+      maxResults: 10,
       pageToken: undefined,
       includeDrafts: true,
     });
@@ -898,11 +896,11 @@ describe("createEmailProviderMailboxSource", () => {
     });
   });
 
-  it("returns enumerated bodies when the provider already fetched them", async () => {
+  it("preserves enumerated bodies for Microsoft when the provider already fetched them", async () => {
     const source = createEmailProviderMailboxSource({
       accountId: "acc-1",
       provider: {
-        name: "google",
+        name: "microsoft",
         async getMessagesWithPagination() {
           return {
             messages: [
@@ -944,7 +942,7 @@ describe("createEmailProviderMailboxSource", () => {
           };
         },
         async getMailboxSyncPage() {
-          throw new Error("unused");
+          return { cursor: "microsoft-cursor", reset: false, upsertedMessages: [], deletedMessageIds: [], hasMore: false };
         },
       } as unknown as EmailProvider,
     });

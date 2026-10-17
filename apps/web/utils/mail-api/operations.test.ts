@@ -14,6 +14,7 @@ import {
   holdEmailForUndo,
 } from "@/utils/scheduled-email/service";
 import type { ScheduledEmail } from "@/generated/prisma/client";
+import { gmailFetch } from "@/utils/gmail/native-runtime";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/utils/prisma");
@@ -33,6 +34,28 @@ vi.mock("@/utils/snooze/scheduler", () => ({
 }));
 
 describe("createEmailProviderOperationExecutor", () => {
+  it.each(["execute", "inspect"] as const)("%s reads metadata without erasing cached attachment evidence", async (method) => {
+    let format: string | null = null;
+    const archiveMessages = vi.fn();
+    const getMessage = async (id: string) => {
+      await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`);
+      return { id, threadId: "thread", headers: { from: "synthetic@example.invalid", to: "synthetic@example.invalid" }, labelIds: [], snippet: "" };
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      format = new URL(typeof input === "object" && "url" in input ? input.url : String(input)).searchParams.get("format");
+      return new Response("{}");
+    }));
+    try {
+      const executor = createEmailProviderOperationExecutor({ accountId: "acc-1", provider: { name: "google", archiveMessages, getMessage } as unknown as EmailProvider });
+      const result = await executor[method]({ operation: metadataOperation([{ accountId: "acc-1", messageId: "m" }]), attemptId: "synthetic", signal: new AbortController().signal });
+      expect(format).toBe("metadata");
+      expect(archiveMessages).toHaveBeenCalledTimes(method === "execute" ? 1 : 0);
+      expect(result.status).toBe("confirmed");
+      if (result.status !== "confirmed") throw new Error("Expected confirmation");
+      expect(result.observations?.filter(change => change.kind === "message_patch").every(change => !("hasAttachments" in change.fields))).toBe(true);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
   });

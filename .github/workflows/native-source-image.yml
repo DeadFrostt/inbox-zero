@@ -1,0 +1,72 @@
+name: Native source image
+on:
+  push:
+    branches: [selfhosted, feature/native-gmail-source]
+  pull_request:
+    branches: [selfhosted]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-source-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 50
+    env:
+      CI: 'true'
+      HUSKY: '0'
+      DOCKER_BUILD: 'true'
+      RUN_AI_TESTS: 'false'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install locked source dependencies
+        run: |
+          npm install --global pnpm@11.19.0
+          ./scripts/pnpm-install-without-desktop.sh --frozen-lockfile --config.node-linker=hoisted
+      - name: Native Gmail and application regressions
+        run: |
+          node --test selfhosted/image/*.test.cjs selfhosted/scripts/poll-gmail.test.mjs
+          pnpm --filter inbox-zero-ai exec vitest run utils/mail-api/source.test.ts utils/mail-api/source.native.test.ts utils/gmail/mailbox-sync.test.ts utils/gmail/client.test.ts utils/gmail/client.native.test.ts utils/gmail/batch.test.ts utils/mail-api/operations.test.ts utils/email/google.test.ts utils/email/google.native.test.ts utils/middleware.test.ts --maxWorkers=2
+      - name: Build immutable ARM64 image from this source
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          read -r upstream < selfhosted/upstream-revision.txt
+          [[ "$upstream" =~ ^[0-9a-f]{40}$ ]]
+          tree=$(git rev-parse HEAD^{tree})
+          docker buildx build --platform linux/arm64 --provenance=false \
+            --file selfhosted/image/Dockerfile \
+            --build-arg SOURCE_REVISION="$GITHUB_SHA" \
+            --build-arg SOURCE_TREE="$tree" \
+            --build-arg UPSTREAM_REVISION="$upstream" \
+            --tag "ghcr.io/deadfrostt/inbox-zero:native-${GITHUB_SHA}" \
+            --output type=docker,dest=artifacts/inbox-zero-arm64.tar .
+          gzip -1 artifacts/inbox-zero-arm64.tar
+          (cd artifacts && sha256sum inbox-zero-arm64.tar.gz > SHA256SUMS)
+          SOURCE_TREE="$tree" UPSTREAM_REVISION="$upstream" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          Path('artifacts/source.json').write_text(json.dumps({
+              'repository': 'DeadFrostt/inbox-zero',
+              'source_revision': os.environ['GITHUB_SHA'],
+              'source_tree': os.environ['SOURCE_TREE'],
+              'upstream_revision': os.environ['UPSTREAM_REVISION'],
+              'integration': 'native-source-v1',
+              'architecture': 'arm64'
+          }, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: inbox-zero-arm64-${{ github.sha }}
+          path: artifacts/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
