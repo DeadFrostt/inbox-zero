@@ -1,3 +1,7 @@
+> **Personal self-hosting fork:** see [selfhosted/README.md](selfhosted/README.md)
+> for the tested Gmail sync/quota/cleanup overlay and [upgrade instructions](selfhosted/UPGRADING.md).
+> This branch is pinned to upstream commit `59cf6d2bc85ab63408d2fc60064f18e1757615a4`.
+
 [![](apps/web/app/opengraph-image.jpg)](https://www.getinboxzero.com)
 
 <p align="center">

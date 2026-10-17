@@ -1,0 +1,21 @@
+name: Self-hosted Gmail checks
+on:
+  push:
+    branches: [selfhosted]
+    paths: ['selfhosted/**', '.github/workflows/selfhosted-gmail-checks.yml']
+  pull_request:
+    paths: ['selfhosted/**', '.github/workflows/selfhosted-gmail-checks.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Test self-hosted Gmail runtime
+        run: node --test selfhosted/image/*.test.cjs selfhosted/scripts/poll-gmail.test.mjs
+      - name: Check scripts
+        run: |
+          node --check selfhosted/image/patch-gmail-transport.cjs
+          node --check selfhosted/scripts/maintenance.mjs
